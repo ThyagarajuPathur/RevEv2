@@ -154,13 +154,15 @@ final class OBDProtocolService {
     private func pollData() async {
         guard let queue = commandQueue, isInitialized else { return }
 
+        var newData = self.obdData
+
         // Request RPM
         do {
             let response = try await queue.execute(OBDPid.rpm.rawValue)
 
             if let rpm = OBDParser.parseRPM(from: response) {
-                self.obdData.rpm = rpm
-                self.obdData.timestamp = Date()
+                newData.rpm = rpm
+                newData.timestamp = Date()
             }
         } catch {
             // Silently continue on polling errors
@@ -171,11 +173,13 @@ final class OBDProtocolService {
             let response = try await queue.execute(OBDPid.speed.rawValue)
 
             if let speed = OBDParser.parseSpeed(from: response) {
-                self.obdData.speed = speed
+                newData.speed = speed
             }
         } catch {
             // Silently continue on polling errors
         }
+
+        self.obdData = newData
     }
 
     private func logTransaction(command: String, response: String, isError: Bool = false) {

@@ -18,8 +18,8 @@ enum OBDParser {
             return nil
         }
 
-        let a = Int(bytes[headerIndex + 1])
-        let b = Int(bytes[headerIndex + 2])
+        let a = Int(bytes[headerIndex])
+        let b = Int(bytes[headerIndex + 1])
 
         return ((a * 256) + b) / 4
     }
@@ -35,7 +35,7 @@ enum OBDParser {
             return nil
         }
 
-        return Int(bytes[headerIndex + 1])
+        return Int(bytes[headerIndex])
     }
 
     /// Check if response indicates no data
