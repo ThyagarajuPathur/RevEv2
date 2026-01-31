@@ -1,0 +1,334 @@
+//
+//  BluetoothService.swift
+//  RevEv
+//
+
+import Foundation
+import CoreBluetooth
+import Combine
+
+/// Core Bluetooth management service for ELM327 adapters
+@Observable
+final class BluetoothService: NSObject, @unchecked Sendable {
+    // MARK: - Published State
+
+    var connectionState: ConnectionState = .disconnected
+    private(set) var discoveredDevices: [BluetoothDevice] = []
+    private(set) var connectedDevice: BluetoothDevice?
+
+    // MARK: - Private Properties
+
+    private var centralManager: CBCentralManager!
+    private var connectedPeripheral: CBPeripheral?
+    private var writeCharacteristic: CBCharacteristic?
+    private var notifyCharacteristic: CBCharacteristic?
+    private var preferredWriteType: CBCharacteristicWriteType = .withResponse
+
+    private var dataBuffer = Data()
+    private var responseSubject = PassthroughSubject<String, Never>()
+    private var cancellables = Set<AnyCancellable>()
+
+    /// Continuation for async response waiting
+    private var responseContinuation: CheckedContinuation<String, Error>?
+
+    // MARK: - Initialization
+
+    override init() {
+        super.init()
+        centralManager = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    // MARK: - Public Methods
+
+    /// Start scanning for ELM327 devices
+    func startScanning() {
+        guard centralManager.state == .poweredOn else {
+            connectionState = .error("Bluetooth is not available")
+            return
+        }
+
+        discoveredDevices.removeAll()
+        connectionState = .scanning
+
+        centralManager.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+
+        // Stop scanning after 10 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            if self?.connectionState == .scanning {
+                self?.stopScanning()
+            }
+        }
+    }
+
+    /// Stop scanning for devices
+    func stopScanning() {
+        centralManager.stopScan()
+        if connectionState == .scanning {
+            connectionState = .disconnected
+        }
+    }
+
+    /// Connect to a specific device
+    func connect(to device: BluetoothDevice) {
+        stopScanning()
+        connectionState = .connecting
+        centralManager.connect(device.peripheral, options: nil)
+    }
+
+    /// Disconnect from current device
+    func disconnect() {
+        if let peripheral = connectedPeripheral {
+            centralManager.cancelPeripheralConnection(peripheral)
+        }
+        cleanup()
+    }
+
+    /// Send a command and wait for response
+    @MainActor
+    func sendCommand(_ command: String, timeout: TimeInterval = 3.0) async throws -> String {
+        guard let writeChar = writeCharacteristic,
+              let peripheral = connectedPeripheral else {
+            throw BluetoothError.notConnected
+        }
+
+        // Clear buffer
+        dataBuffer.removeAll()
+
+        // Add carriage return to command
+        let commandData = "\(command)\r".data(using: .ascii)!
+
+        return try await withCheckedThrowingContinuation { continuation in
+            self.responseContinuation = continuation
+
+            peripheral.writeValue(commandData, for: writeChar, type: self.preferredWriteType)
+
+            // For writeWithoutResponse, we won't get didWriteValueFor
+            if self.preferredWriteType == .withoutResponse {
+                // We might want to handle this differently, but for now just let it proceed
+                // and hope for a notification soon after.
+            }
+
+            // Timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                if self?.responseContinuation != nil {
+                    self?.responseContinuation?.resume(throwing: BluetoothError.timeout)
+                    self?.responseContinuation = nil
+                }
+            }
+        }
+    }
+
+    // MARK: - Private Methods
+
+    private func cleanup() {
+        connectedPeripheral = nil
+        connectedDevice = nil
+        writeCharacteristic = nil
+        notifyCharacteristic = nil
+        dataBuffer.removeAll()
+        responseContinuation = nil
+        connectionState = .disconnected
+    }
+
+    private func processReceivedData(_ data: Data) {
+        dataBuffer.append(data)
+
+        // Check for response terminator '>'
+        guard let responseString = String(data: dataBuffer, encoding: .ascii) else {
+            return
+        }
+
+        if responseString.contains(">") {
+            // Some devices send multiple lines before the '>'
+            // We want the whole response up to the '>'
+            let response = responseString
+                .replacingOccurrences(of: ">", with: "")
+
+            dataBuffer.removeAll()
+
+            if let continuation = responseContinuation {
+                continuation.resume(returning: response)
+                responseContinuation = nil
+            }
+
+            responseSubject.send(response)
+        }
+    }
+}
+
+// MARK: - CBCentralManagerDelegate
+
+extension BluetoothService: CBCentralManagerDelegate {
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Task { @MainActor in
+            switch central.state {
+            case .poweredOn:
+                break
+            case .poweredOff:
+                self.connectionState = .error("Bluetooth is turned off")
+                self.cleanup()
+            case .unauthorized:
+                self.connectionState = .error("Bluetooth permission denied")
+            case .unsupported:
+                self.connectionState = .error("Bluetooth not supported")
+            default:
+                break
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        // Filter for likely OBD adapters by name
+        let name = peripheral.name ?? ""
+        let isLikelyOBD = name.lowercased().contains("obd") ||
+                          name.lowercased().contains("elm") ||
+                          name.lowercased().contains("vlink") ||
+                          name.lowercased().contains("veepeak") ||
+                          name.lowercased().contains("car") ||
+                          name.contains("IOS-Vlink") ||
+                          name.contains("OBDII")
+
+        // Only add devices with names or likely OBD devices
+        guard !name.isEmpty || isLikelyOBD else { return }
+
+        let device = BluetoothDevice(peripheral: peripheral, rssi: RSSI.intValue)
+
+        Task { @MainActor in
+            if !self.discoveredDevices.contains(where: { $0.id == device.id }) {
+                self.discoveredDevices.append(device)
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        Task { @MainActor in
+            self.connectedPeripheral = peripheral
+            self.connectedDevice = self.discoveredDevices.first { $0.id == peripheral.identifier }
+            peripheral.delegate = self
+            self.connectionState = .connected
+
+            // Discover services
+            peripheral.discoverServices(nil)
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        Task { @MainActor in
+            self.connectionState = .error(error?.localizedDescription ?? "Connection failed")
+            self.cleanup()
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        Task { @MainActor in
+            self.cleanup()
+        }
+    }
+}
+
+// MARK: - CBPeripheralDelegate
+
+extension BluetoothService: CBPeripheralDelegate {
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        Task { @MainActor in
+            guard error == nil, let services = peripheral.services else {
+                self.connectionState = .error("Failed to discover services")
+                return
+            }
+
+            for service in services {
+                peripheral.discoverCharacteristics(nil, for: service)
+            }
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        Task { @MainActor in
+            guard error == nil, let characteristics = service.characteristics else {
+                return
+            }
+
+            let knownWriteUUID = ELM327UUIDs.writeCharacteristic(for: service.uuid)
+            let knownNotifyUUID = ELM327UUIDs.notifyCharacteristic(for: service.uuid)
+
+            for characteristic in characteristics {
+                // Check against known UUIDs first
+                if let writeUUID = knownWriteUUID, characteristic.uuid == writeUUID {
+                    self.writeCharacteristic = characteristic
+                    self.preferredWriteType = characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+                    print("DEBUG: Found known write characteristic: \(characteristic.uuid)")
+                } else if let notifyUUID = knownNotifyUUID, characteristic.uuid == notifyUUID {
+                    self.notifyCharacteristic = characteristic
+                    peripheral.setNotifyValue(true, for: characteristic)
+                    print("DEBUG: Found known notify characteristic: \(characteristic.uuid)")
+                }
+
+                // Fallback to property-based discovery if not already found
+                if self.writeCharacteristic == nil {
+                    if characteristic.properties.contains(.write) {
+                        self.writeCharacteristic = characteristic
+                        self.preferredWriteType = .withResponse
+                    } else if characteristic.properties.contains(.writeWithoutResponse) {
+                        self.writeCharacteristic = characteristic
+                        self.preferredWriteType = .withoutResponse
+                    }
+                }
+
+                if self.notifyCharacteristic == nil && characteristic.properties.contains(.notify) {
+                    self.notifyCharacteristic = characteristic
+                    peripheral.setNotifyValue(true, for: characteristic)
+                }
+            }
+
+            // Check if we have both characteristics
+            if self.writeCharacteristic != nil && self.notifyCharacteristic != nil {
+                print("DEBUG: Both characteristics found. Initializing...")
+                self.connectionState = .initializing
+            }
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil, let data = characteristic.value else {
+            return
+        }
+
+        Task { @MainActor in
+            self.processReceivedData(data)
+        }
+    }
+
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            Task { @MainActor in
+                self.responseContinuation?.resume(throwing: BluetoothError.writeFailed(error.localizedDescription))
+                self.responseContinuation = nil
+            }
+        }
+    }
+}
+
+// MARK: - Errors
+
+enum BluetoothError: LocalizedError, Sendable {
+    case notConnected
+    case timeout
+    case writeFailed(String)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .notConnected:
+            return "Not connected to device"
+        case .timeout:
+            return "Command timeout"
+        case .writeFailed(let reason):
+            return "Write failed: \(reason)"
+        case .invalidResponse:
+            return "Invalid response received"
+        }
+    }
+}
