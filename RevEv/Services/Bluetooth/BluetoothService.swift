@@ -94,7 +94,13 @@ final class BluetoothService: NSObject, @unchecked Sendable {
             throw BluetoothError.notConnected
         }
 
-        // Clear buffer
+        // Cancel any pending continuation to prevent "multiple resumes" crash
+        if let pending = responseContinuation {
+            pending.resume(throwing: BluetoothError.timeout)
+            responseContinuation = nil
+        }
+
+        // Clear buffer before sending
         dataBuffer.removeAll()
 
         // Add carriage return to command
@@ -105,17 +111,14 @@ final class BluetoothService: NSObject, @unchecked Sendable {
 
             peripheral.writeValue(commandData, for: writeChar, type: self.preferredWriteType)
 
-            // For writeWithoutResponse, we won't get didWriteValueFor
-            if self.preferredWriteType == .withoutResponse {
-                // We might want to handle this differently, but for now just let it proceed
-                // and hope for a notification soon after.
-            }
-
-            // Timeout
+            // Timeout handling
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
-                if self?.responseContinuation != nil {
-                    self?.responseContinuation?.resume(throwing: BluetoothError.timeout)
-                    self?.responseContinuation = nil
+                guard let self = self else { return }
+                if self.responseContinuation != nil {
+                    let bufferContent = String(data: self.dataBuffer, encoding: .ascii) ?? "NON-ASCII"
+                    print("DEBUG: Command '\(command)' timed out after \(timeout)s. Buffer: [\(bufferContent)]")
+                    self.responseContinuation?.resume(throwing: BluetoothError.timeout)
+                    self.responseContinuation = nil
                 }
             }
         }

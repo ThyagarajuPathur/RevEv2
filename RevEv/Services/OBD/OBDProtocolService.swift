@@ -26,6 +26,8 @@ final class OBDProtocolService {
 
     private var pollingTask: Task<Void, Never>?
     private let maxTransactions = 100
+    private var consecutiveTimeouts = 0
+    private let maxConsecutiveTimeouts = 3
 
     // MARK: - Callbacks
 
@@ -47,41 +49,45 @@ final class OBDProtocolService {
         }
 
         isInitialized = false
+        bluetoothService.connectionState = .initializing
 
-        for command in ELM327Commands.initSequence {
-            do {
-                let response = try await queue.execute(command, timeout: 5.0)
-                logTransaction(command: command, response: response)
-
-                // Check for successful response
-                if command == ELM327Commands.reset {
-                    // Reset returns ELM identifier
-                    if !OBDParser.isELM(response) && !response.isEmpty {
-                        // Some adapters might not return ELM, continue anyway
-                    }
-                    // Give adapter time to reset
-                    try await Task.sleep(nanoseconds: 500_000_000) // 500ms
-                }
-            } catch {
-                logTransaction(command: command, response: error.localizedDescription, isError: true)
-                // Continue with remaining commands even if some fail
-            }
+        do {
+            // 1. Reset the adapter (Long timeout 5s)
+            let resetResponse = try await queue.execute("AT Z", timeout: 5.0)
+            logTransaction(command: "AT Z", response: resetResponse)
+            
+            // CRITICAL: Delay for adapter boot-up
+            try await Task.sleep(nanoseconds: 1_000_000_000) // 1.0s
+            
+            // 2. Setup basics
+            _ = try await queue.execute("AT E0") // Echo Off
+            _ = try await queue.execute("AT L0") // Linefeeds Off
+            
+            // 3. Force CAN Protocol (ISO 15765-4 CAN 11/500)
+            _ = try await queue.execute("AT SP 6")
+            
+            // 4. Force BMS Header (7E4)
+            _ = try await queue.execute("AT SH 7E4")
+            
+            isInitialized = true
+            bluetoothService.connectionState = .ready
+            print("DEBUG: OBD Protocol Service Initialized (EV Mode - BMS 7E4)")
+        } catch {
+            logTransaction(command: "INIT", response: error.localizedDescription, isError: true)
+            throw error
         }
-
-        isInitialized = true
-        bluetoothService.connectionState = .ready
     }
 
     /// Start polling for RPM and Speed data
-    func startPolling(interval: TimeInterval = 0.1) {
+    func startPolling() {
         guard !isPolling else { return }
-
         isPolling = true
 
-        pollingTask = Task { [weak self] in
-            while !Task.isCancelled {
-                await self?.pollData()
-                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        Task {
+            while isPolling {
+                await pollData()
+                // Throttled delay to prevent buffer overflow (500ms)
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
     }
@@ -89,8 +95,9 @@ final class OBDProtocolService {
     /// Stop polling
     func stopPolling() {
         isPolling = false
-        pollingTask?.cancel()
-        pollingTask = nil
+        // The Task will naturally exit its loop when `isPolling` becomes false
+        // No need to explicitly cancel `pollingTask` if it's not stored.
+        // If `pollingTask` was stored, it would be `pollingTask?.cancel()`
     }
 
     /// Request a single RPM reading
@@ -157,14 +164,20 @@ final class OBDProtocolService {
         var newData = self.obdData
 
         // 1. Request Motor RPM from BMS (220101)
+        // Use 5s timeout for the long multi-line response
+        var rpmSuccess = false
         do {
-            let response = try await queue.execute("220101")
+            let response = try await queue.execute("220101", timeout: 5.0)
             if let rpm = OBDParser.parseEVLongRPM(from: response) {
                 newData.rpm = rpm
                 newData.timestamp = Date()
+                rpmSuccess = true
             }
         } catch {
             print("DEBUG: EV RPM Polling error: \(error)")
+            if error.localizedDescription.contains("timeout") {
+                handleTimeout()
+            }
         }
 
         // 2. Request Speed (010D also works at 7E4 on most EVs)
@@ -172,12 +185,36 @@ final class OBDProtocolService {
             let response = try await queue.execute(OBDPid.speed.rawValue)
             if let speed = OBDParser.parseSpeed(from: response) {
                 newData.speed = speed
+                if !rpmSuccess { // If RPM failed but speed worked, reset timeout count
+                    consecutiveTimeouts = 0
+                }
             }
         } catch {
             print("DEBUG: EV Speed Polling error: \(error)")
+            if error.localizedDescription.contains("timeout") {
+                handleTimeout()
+            }
+        }
+        
+        // If at least one command succeeded, reset timeout counter
+        if rpmSuccess {
+            consecutiveTimeouts = 0
         }
 
         self.obdData = newData
+    }
+
+    private func handleTimeout() {
+        consecutiveTimeouts += 1
+        print("DEBUG: Consecutive timeouts: \(consecutiveTimeouts)/\(maxConsecutiveTimeouts)")
+        
+        if consecutiveTimeouts >= maxConsecutiveTimeouts {
+            print("DEBUG: Max timeouts reached. Triggering self-healing recovery...")
+            consecutiveTimeouts = 0
+            Task {
+                try? await initializeAdapter()
+            }
+        }
     }
 
     private func logTransaction(command: String, response: String, isError: Bool = false) {

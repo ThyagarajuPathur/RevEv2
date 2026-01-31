@@ -23,7 +23,7 @@ final class OBDCommandQueue {
 
     /// Execute a command and return the response
     /// Commands are serialized to prevent garbled responses
-    func execute(_ command: String, timeout: TimeInterval = 3.0) async throws -> String {
+    func execute(_ command: String, timeout: TimeInterval = 5.0) async throws -> String {
         // Wait for any in-flight command to complete
         while isExecuting {
             try await Task.sleep(nanoseconds: 10_000_000) // 10ms
@@ -32,14 +32,14 @@ final class OBDCommandQueue {
         isExecuting = true
         defer { isExecuting = false }
 
-        // Small delay between commands for adapter stability
-        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        // Increased delay between commands for adapter stability (200ms)
+        try await Task.sleep(nanoseconds: 200_000_000) 
 
         return try await bluetoothService.sendCommand(command, timeout: timeout)
     }
 
     /// Execute a batch of commands in sequence
-    func executeBatch(_ commands: [String], timeout: TimeInterval = 3.0) async throws -> [String] {
+    func executeBatch(_ commands: [String], timeout: TimeInterval = 5.0) async throws -> [String] {
         var responses: [String] = []
 
         for command in commands {
