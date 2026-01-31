@@ -156,27 +156,25 @@ final class OBDProtocolService {
 
         var newData = self.obdData
 
-        // Request RPM
+        // 1. Request Motor RPM from BMS (220101)
         do {
-            let response = try await queue.execute(OBDPid.rpm.rawValue)
-
-            if let rpm = OBDParser.parseRPM(from: response) {
+            let response = try await queue.execute("220101")
+            if let rpm = OBDParser.parseEVLongRPM(from: response) {
                 newData.rpm = rpm
                 newData.timestamp = Date()
             }
         } catch {
-            // Silently continue on polling errors
+            print("DEBUG: EV RPM Polling error: \(error)")
         }
 
-        // Request Speed
+        // 2. Request Speed (010D also works at 7E4 on most EVs)
         do {
             let response = try await queue.execute(OBDPid.speed.rawValue)
-
             if let speed = OBDParser.parseSpeed(from: response) {
                 newData.speed = speed
             }
         } catch {
-            // Silently continue on polling errors
+            print("DEBUG: EV Speed Polling error: \(error)")
         }
 
         self.obdData = newData

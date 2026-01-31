@@ -60,28 +60,66 @@ enum OBDParser {
     // MARK: - Private Helpers
 
     /// Extract hex bytes from response string
+    /// Extract bytes from an OBD-II response string, handling multi-line formats
     private static func extractBytes(from response: String) -> [UInt8] {
-        // Remove spaces and convert to bytes
-        let cleaned = response
-            .uppercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .joined()
-
         var bytes: [UInt8] = []
-        var index = cleaned.startIndex
-
-        while index < cleaned.endIndex {
-            let nextIndex = cleaned.index(index, offsetBy: 2, limitedBy: cleaned.endIndex) ?? cleaned.endIndex
-            let hexPair = String(cleaned[index..<nextIndex])
-
-            if hexPair.count == 2, let byte = UInt8(hexPair, radix: 16) {
-                bytes.append(byte)
+        
+        // Split by lines and process each line
+        let lines = response.components(separatedBy: .newlines)
+        
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if trimmed.isEmpty || trimmed == ">" { continue }
+            
+            // Remove line prefix if present (e.g., "0:", "1:")
+            var dataPart = trimmed
+            if let colonIndex = trimmed.firstIndex(of: ":") {
+                dataPart = String(trimmed[trimmed.index(after: colonIndex)...])
+            } else if trimmed.count <= 3 {
+                // Likely a length header (e.g. "03E") - skip it
+                continue
             }
-
-            index = nextIndex
+            
+            // Clean the data part of any non-hex characters
+            let hexOnly = dataPart.components(separatedBy: CharacterSet.alphanumerics.inverted).joined()
+            
+            // Convert pairs to bytes
+            var index = hexOnly.startIndex
+            while index < hexOnly.endIndex {
+                let nextIndex = hexOnly.index(index, offsetBy: 2, limitedBy: hexOnly.endIndex) ?? hexOnly.endIndex
+                let pair = hexOnly[index..<nextIndex]
+                if pair.count == 2, let byte = UInt8(pair, radix: 16) {
+                    bytes.append(byte)
+                }
+                index = nextIndex
+            }
         }
-
+        
         return bytes
+    }
+
+    /// Parse long EV BMS responses (e.g., 220101) to find Motor RPM
+    static func parseEVLongRPM(from response: String) -> Int? {
+        let bytes = extractBytes(from: response)
+        
+        // Mode 22 response starts with 62 [PID_HI] [PID_LO]
+        // 220101 -> 62 01 01
+        guard let headerIndex = findHeader(bytes: bytes, header: [0x62, 0x01, 0x01]) else {
+            return nil
+        }
+        
+        // For common EVs (Hyundai/Kia/Genesis), Motor RPM is often at offset 53-54 or 55-56
+        // in the data stream (after the 62 01 01 header).
+        // Let's use offset 55 as the primary based on common PID lists.
+        let offset = 55
+        if bytes.count > headerIndex + offset + 1 {
+            let a = bytes[headerIndex + offset]
+            let b = bytes[headerIndex + offset + 1]
+            let raw = Int16(bitPattern: UInt16(a) << 8 | UInt16(b))
+            return abs(Int(raw))
+        }
+        
+        return nil
     }
 
     /// Find header bytes in response and return the index of the first data byte
