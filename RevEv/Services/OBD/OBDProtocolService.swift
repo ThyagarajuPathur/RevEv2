@@ -86,8 +86,6 @@ final class OBDProtocolService {
         Task {
             while isPolling {
                 await pollData()
-                // Fast polling for responsive RPM display (50ms = 20Hz)
-                try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
     }
@@ -205,23 +203,7 @@ final class OBDProtocolService {
             }
         }
 
-        // 2. Request Speed (010D also works at 7E4 on most EVs)
-        do {
-            let response = try await queue.execute(OBDPid.speed.rawValue)
-            if let speed = OBDParser.parseSpeed(from: response) {
-                newData.speed = speed
-                if !rpmSuccess { // If RPM failed but speed worked, reset timeout count
-                    consecutiveTimeouts = 0
-                }
-            }
-        } catch {
-            print("DEBUG: EV Speed Polling error: \(error)")
-            if error.localizedDescription.contains("timeout") {
-                handleTimeout()
-            }
-        }
-        
-        // If at least one command succeeded, reset timeout counter
+        // Reset timeout counter on success
         if rpmSuccess {
             consecutiveTimeouts = 0
         }

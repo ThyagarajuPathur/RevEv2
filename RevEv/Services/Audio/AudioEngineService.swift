@@ -30,7 +30,7 @@ final class AudioEngineService {
     private var displayLink: CADisplayLink?
     private var targetRPM: Int = 0
     private var currentRPM: Float = 0
-    private let smoothingFactor: Float = 0.12
+    private let smoothingFactor: Float = 0.6
 
     // MARK: - Initialization
 

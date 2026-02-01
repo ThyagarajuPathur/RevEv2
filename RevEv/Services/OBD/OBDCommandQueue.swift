@@ -32,9 +32,6 @@ final class OBDCommandQueue {
         isExecuting = true
         defer { isExecuting = false }
 
-        // Increased delay between commands for adapter stability (200ms)
-        try await Task.sleep(nanoseconds: 200_000_000) 
-
         return try await bluetoothService.sendCommand(command, timeout: timeout)
     }
 
