@@ -98,27 +98,49 @@ enum OBDParser {
         return bytes
     }
 
-    /// Parse long EV BMS responses (e.g., 220101) to find Motor RPM
-    static func parseEVLongRPM(from response: String) -> Int? {
+    /// Parse long EV BMS responses (e.g., 220101 or 2101) to find Motor RPM
+    /// Returns tuple of (rpm, pidUsed, offset) for debugging, or nil if parsing failed
+    static func parseEVLongRPM(from response: String, debug: Bool = false) -> Int? {
+        let result = parseEVLongRPMWithDebug(from: response)
+        if debug, let (rpm, pid, offset) = result {
+            print("DEBUG RPM: Found \(rpm) rpm using PID \(pid) at offset \(offset)")
+        }
+        return result?.0
+    }
+
+    /// Parse with full debug info - returns (rpm, pidUsed, offset)
+    static func parseEVLongRPMWithDebug(from response: String) -> (Int, String, Int)? {
         let bytes = extractBytes(from: response)
-        
-        // Mode 22 response starts with 62 [PID_HI] [PID_LO]
-        // 220101 -> 62 01 01
-        guard let headerIndex = findHeader(bytes: bytes, header: [0x62, 0x01, 0x01]) else {
-            return nil
+
+        // Try Ioniq 5 / EV6 format first: 220101 -> response header 62 01 01, offset 55-56
+        if let headerIndex = findHeader(bytes: bytes, header: [0x62, 0x01, 0x01]) {
+            let offset = 55
+            if bytes.count > headerIndex + offset + 1 {
+                let a = bytes[headerIndex + offset]
+                let b = bytes[headerIndex + offset + 1]
+                let raw = Int16(bitPattern: UInt16(a) << 8 | UInt16(b))
+                print("DEBUG: [220101] Header at \(headerIndex), bytes[\(headerIndex + offset)]=\(String(format: "0x%02X", a)), bytes[\(headerIndex + offset + 1)]=\(String(format: "0x%02X", b)), raw=\(raw)")
+                return (Int(raw), "220101", offset)
+            }
         }
-        
-        // For common EVs (Hyundai/Kia/Genesis), Motor RPM is often at offset 53-54 or 55-56
-        // in the data stream (after the 62 01 01 header).
-        // Let's use offset 55 as the primary based on common PID lists.
-        let offset = 55
-        if bytes.count > headerIndex + offset + 1 {
-            let a = bytes[headerIndex + offset]
-            let b = bytes[headerIndex + offset + 1]
-            let raw = Int16(bitPattern: UInt16(a) << 8 | UInt16(b))
-            return abs(Int(raw))
+
+        // Try Kona EV / Niro EV format: 2101 -> response header 61 01, offset 53-54
+        if let headerIndex = findHeader(bytes: bytes, header: [0x61, 0x01]) {
+            let offset = 53
+            if bytes.count > headerIndex + offset + 1 {
+                let a = bytes[headerIndex + offset]
+                let b = bytes[headerIndex + offset + 1]
+                let raw = Int16(bitPattern: UInt16(a) << 8 | UInt16(b))
+                print("DEBUG: [2101] Header at \(headerIndex), bytes[\(headerIndex + offset)]=\(String(format: "0x%02X", a)), bytes[\(headerIndex + offset + 1)]=\(String(format: "0x%02X", b)), raw=\(raw)")
+                return (Int(raw), "2101", offset)
+            }
         }
-        
+
+        print("DEBUG: No valid RPM header found. Total bytes: \(bytes.count)")
+        if !bytes.isEmpty {
+            print("DEBUG: First 10 bytes: \(bytes.prefix(10).map { String(format: "0x%02X", $0) }.joined(separator: " "))")
+        }
+
         return nil
     }
 

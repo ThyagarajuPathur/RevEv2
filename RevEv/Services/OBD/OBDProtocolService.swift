@@ -163,20 +163,45 @@ final class OBDProtocolService {
 
         var newData = self.obdData
 
-        // 1. Request Motor RPM from BMS (220101)
-        // Use 5s timeout for the long multi-line response
+        // 1. Request Motor RPM from BMS
+        // Try both PID formats: 220101 (Ioniq 5/EV6) and 2101 (Kona/Niro)
         var rpmSuccess = false
+
+        // First try 220101 (Ioniq 5 / EV6 format)
         do {
             let response = try await queue.execute("220101", timeout: 5.0)
-            if let rpm = OBDParser.parseEVLongRPM(from: response) {
+            print("DEBUG: [220101] Raw response: \(response.prefix(100))...")
+            if let result = OBDParser.parseEVLongRPMWithDebug(from: response) {
+                let (rpm, pid, offset) = result
+                print("DEBUG: ✓ RPM=\(rpm) from PID \(pid) at offset \(offset)")
                 newData.rpm = rpm
                 newData.timestamp = Date()
                 rpmSuccess = true
             }
         } catch {
-            print("DEBUG: EV RPM Polling error: \(error)")
+            print("DEBUG: [220101] Error: \(error.localizedDescription)")
             if error.localizedDescription.contains("timeout") {
                 handleTimeout()
+            }
+        }
+
+        // If 220101 failed, try 2101 (Kona / Niro format)
+        if !rpmSuccess {
+            do {
+                let response = try await queue.execute("2101", timeout: 5.0)
+                print("DEBUG: [2101] Raw response: \(response.prefix(100))...")
+                if let result = OBDParser.parseEVLongRPMWithDebug(from: response) {
+                    let (rpm, pid, offset) = result
+                    print("DEBUG: ✓ RPM=\(rpm) from PID \(pid) at offset \(offset)")
+                    newData.rpm = rpm
+                    newData.timestamp = Date()
+                    rpmSuccess = true
+                }
+            } catch {
+                print("DEBUG: [2101] Error: \(error.localizedDescription)")
+                if error.localizedDescription.contains("timeout") {
+                    handleTimeout()
+                }
             }
         }
 
