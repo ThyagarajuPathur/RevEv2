@@ -22,7 +22,7 @@ final class AudioEngineService {
 
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
-    private var timePitchNode: AVAudioUnitTimePitch?
+    private var varispeedNode: AVAudioUnitVarispeed?  // Lower latency than TimePitch
 
     private var audioFile: AVAudioFile?
     private var audioBuffer: AVAudioPCMBuffer?
@@ -30,13 +30,6 @@ final class AudioEngineService {
     private var displayLink: CADisplayLink?
     private var targetRPM: Int = 0
     private var currentRPM: Float = 0
-    private var currentPitchSmooth: Float = 0
-
-    // RPM change rate (units per frame at 60fps) - higher = faster response
-    private let rpmChangeRate: Float = 800
-
-    // Pitch smoothing for silky transitions
-    private let pitchSmoothingFactor: Float = 0.3
 
     // Volume scaling - louder overall
     private let minVolume: Float = 0.7   // Volume at idle
@@ -86,7 +79,7 @@ final class AudioEngineService {
         audioEngine?.stop()
 
         playerNode = nil
-        timePitchNode = nil
+        varispeedNode = nil
         audioEngine = nil
     }
 
@@ -133,27 +126,27 @@ final class AudioEngineService {
     private func setupAudioEngine() {
         audioEngine = AVAudioEngine()
         playerNode = AVAudioPlayerNode()
-        timePitchNode = AVAudioUnitTimePitch()
+        varispeedNode = AVAudioUnitVarispeed()  // Much lower latency than TimePitch
 
         guard let engine = audioEngine,
               let player = playerNode,
-              let pitch = timePitchNode,
+              let varispeed = varispeedNode,
               let buffer = audioBuffer else {
             return
         }
 
         // Attach nodes
         engine.attach(player)
-        engine.attach(pitch)
+        engine.attach(varispeed)
 
-        // Connect nodes: Player -> TimePitch -> MainMixer -> Output
+        // Connect nodes: Player -> Varispeed -> MainMixer -> Output
         let format = buffer.format
-        engine.connect(player, to: pitch, format: format)
-        engine.connect(pitch, to: engine.mainMixerNode, format: format)
+        engine.connect(player, to: varispeed, format: format)
+        engine.connect(varispeed, to: engine.mainMixerNode, format: format)
 
-        // Configure
+        // Configure - varispeed rate 1.0 = normal speed/pitch
         player.volume = volume
-        pitch.pitch = 0
+        varispeed.rate = 1.0
 
         do {
             try engine.start()
@@ -196,28 +189,19 @@ final class AudioEngineService {
     }
 
     private func tick() {
-        // Linear interpolation for RPM (responsive but not jumpy)
-        let targetFloat = Float(targetRPM)
-        let rpmDiff = targetFloat - currentRPM
+        // Direct RPM update - no interpolation for lowest latency
+        currentRPM = Float(targetRPM)
 
-        if abs(rpmDiff) < rpmChangeRate {
-            currentRPM = targetFloat
-        } else {
-            currentRPM += rpmDiff > 0 ? rpmChangeRate : -rpmChangeRate
-        }
+        // Calculate and apply rate instantly
+        let rate = calculateRate(for: currentRPM)
+        varispeedNode?.rate = rate
 
-        // Calculate target pitch
-        let targetPitch = calculatePitch(for: currentRPM)
+        // Calculate pitch in cents for display (not used for audio)
+        currentPitch = 1200.0 * log2(rate)
 
-        // Smooth pitch transitions (prevents audible stepping)
-        currentPitchSmooth += (targetPitch - currentPitchSmooth) * pitchSmoothingFactor
-        currentPitch = currentPitchSmooth
-        timePitchNode?.pitch = currentPitchSmooth
-
-        // Smooth volume changes
+        // Direct volume update - no smoothing
         let targetVolume = calculateVolume(for: currentRPM) * volume
-        let currentVol = playerNode?.volume ?? targetVolume
-        playerNode?.volume = currentVol + (targetVolume - currentVol) * pitchSmoothingFactor
+        playerNode?.volume = targetVolume
     }
 
     /// Calculate volume based on RPM - louder at higher RPM
@@ -232,26 +216,21 @@ final class AudioEngineService {
         return minVolume + (maxVolume - minVolume) * normalizedRPM
     }
 
-    /// Calculate pitch shift in cents based on RPM
-    private func calculatePitch(for rpm: Float) -> Float {
-        let profile = currentProfile
-        let maxRPM = Float(profile.maxRPM)
+    /// Calculate playback rate based on RPM (1.0 = normal, 2.0 = double speed)
+    private func calculateRate(for rpm: Float) -> Float {
+        let maxRPM = Float(currentProfile.maxRPM)
 
         // For EV: use absolute RPM (motor speed regardless of direction)
-        // Negative RPM = regen braking, Positive RPM = driving
-        // Both should increase pitch based on motor speed
         let absRPM = abs(rpm)
 
         // Normalize RPM (0 to 1)
         let normalizedRPM = min(1.0, absRPM / maxRPM)
 
-        // Logarithmic pitch scaling for natural engine sound
-        // 1200 cents = 1 octave
-        // Range: 0 RPM = base pitch, max RPM = +1.5 octaves
-        let pitchMultiplier = 1.0 + Double(normalizedRPM) * 1.5
-        let pitchCents = 1200.0 * log2(pitchMultiplier)
+        // Rate scaling: 1.0 at idle, up to 2.5 at max RPM
+        // This gives ~1.5 octaves of pitch range
+        let rate = 1.0 + normalizedRPM * 1.5
 
-        return Float(pitchCents)
+        return rate
     }
 }
 
