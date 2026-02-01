@@ -46,8 +46,8 @@ struct EngineProfile: Identifiable, Hashable, Sendable {
         description: "Electric/hybrid sci-fi sound",
         audioFileName: "futuristic_idle",
         baseRPM: 0,
-        minRPM: 0,
-        maxRPM: 10000,
+        minRPM: -10100,
+        maxRPM: 10100,
         pitchRange: 3600
     )
 

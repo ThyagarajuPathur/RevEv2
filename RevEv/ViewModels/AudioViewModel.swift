@@ -41,8 +41,8 @@ final class AudioViewModel {
 
     init() {
         self.audioService = AudioEngineService()
-        // Load default profile
-        audioService.loadProfile(.v8Muscle)
+        // Load EV-optimized profile by default
+        audioService.loadProfile(.futuristic)
     }
 
     // MARK: - Playback Control

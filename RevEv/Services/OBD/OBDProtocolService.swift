@@ -86,8 +86,8 @@ final class OBDProtocolService {
         Task {
             while isPolling {
                 await pollData()
-                // Throttled delay to prevent buffer overflow (500ms)
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                // Fast polling for responsive RPM display (50ms = 20Hz)
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
     }

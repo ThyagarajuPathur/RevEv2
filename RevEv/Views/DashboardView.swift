@@ -263,6 +263,10 @@ struct DashboardView: View {
         case .ready:
             // Auto-start polling when ready
             obdViewModel.startPolling()
+            // Auto-start audio playback
+            if !audioViewModel.isPlaying {
+                audioViewModel.start()
+            }
         case .disconnected:
             // Stop polling on disconnect
             obdViewModel.stopPolling()

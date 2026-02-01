@@ -72,7 +72,7 @@ struct RPMGaugeView: View {
                         .foregroundStyle(gaugeColor)
                         .shadow(color: gaugeColor.opacity(0.8), radius: 4)
 
-                    Text("x1000")
+                    Text("RPM")
                         .font(.cyberpunkCaption)
                         .foregroundStyle(CyberpunkTheme.textMuted)
                 }
@@ -89,9 +89,9 @@ struct RPMGaugeView: View {
         CyberpunkTheme.darkBackground.ignoresSafeArea()
 
         HStack(spacing: 20) {
-            RPMGaugeView(rpm: 2500, maxRPM: 8000)
-            RPMGaugeView(rpm: 5500, maxRPM: 8000)
-            RPMGaugeView(rpm: 7200, maxRPM: 8000)
+            RPMGaugeView(rpm: 0, maxRPM: 10100)
+            RPMGaugeView(rpm: 5000, maxRPM: 10100)
+            RPMGaugeView(rpm: 8500, maxRPM: 10100)
         }
     }
 }

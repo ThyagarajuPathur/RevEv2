@@ -31,11 +31,58 @@ final class BluetoothService: NSObject, @unchecked Sendable {
     /// Continuation for async response waiting
     private var responseContinuation: CheckedContinuation<String, Error>?
 
+    /// Auto-connect settings
+    var autoConnectEnabled: Bool = true
+    private let lastDeviceKey = "RevEv.LastConnectedDeviceUUID"
+
     // MARK: - Initialization
 
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    // MARK: - Auto-Connect
+
+    /// Get the last connected device UUID
+    private var lastConnectedDeviceUUID: UUID? {
+        get {
+            guard let uuidString = UserDefaults.standard.string(forKey: lastDeviceKey) else { return nil }
+            return UUID(uuidString: uuidString)
+        }
+        set {
+            UserDefaults.standard.set(newValue?.uuidString, forKey: lastDeviceKey)
+        }
+    }
+
+    /// Save the current device for auto-reconnect
+    private func saveLastDevice(_ device: BluetoothDevice) {
+        lastConnectedDeviceUUID = device.peripheral.identifier
+        print("DEBUG: Saved device for auto-connect: \(device.name)")
+    }
+
+    /// Check if device matches last connected or is a known OBD adapter
+    private func shouldAutoConnect(to device: BluetoothDevice) -> Bool {
+        // Priority 1: Last connected device
+        if let lastUUID = lastConnectedDeviceUUID, device.peripheral.identifier == lastUUID {
+            print("DEBUG: Found last connected device: \(device.name)")
+            return true
+        }
+
+        // Priority 2: Known OBD adapter names
+        let name = device.name.lowercased()
+        let isKnownOBD = name.contains("obd") ||
+                         name.contains("elm") ||
+                         name.contains("vlink") ||
+                         name.contains("veepeak") ||
+                         name.contains("ios-vlink")
+
+        if isKnownOBD {
+            print("DEBUG: Found known OBD adapter: \(device.name)")
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Public Methods
@@ -169,7 +216,11 @@ extension BluetoothService: CBCentralManagerDelegate {
         Task { @MainActor in
             switch central.state {
             case .poweredOn:
-                break
+                // Auto-start scanning when Bluetooth is ready
+                if self.autoConnectEnabled && self.connectionState == .disconnected {
+                    print("DEBUG: Bluetooth ready, starting auto-scan...")
+                    self.startScanning()
+                }
             case .poweredOff:
                 self.connectionState = .error("Bluetooth is turned off")
                 self.cleanup()
@@ -202,6 +253,14 @@ extension BluetoothService: CBCentralManagerDelegate {
         Task { @MainActor in
             if !self.discoveredDevices.contains(where: { $0.id == device.id }) {
                 self.discoveredDevices.append(device)
+
+                // Auto-connect if enabled and device matches criteria
+                if self.autoConnectEnabled &&
+                   self.connectionState == .scanning &&
+                   self.shouldAutoConnect(to: device) {
+                    print("DEBUG: Auto-connecting to \(device.name)...")
+                    self.connect(to: device)
+                }
             }
         }
     }
@@ -212,6 +271,11 @@ extension BluetoothService: CBCentralManagerDelegate {
             self.connectedDevice = self.discoveredDevices.first { $0.id == peripheral.identifier }
             peripheral.delegate = self
             self.connectionState = .connected
+
+            // Save for auto-reconnect
+            if let device = self.connectedDevice {
+                self.saveLastDevice(device)
+            }
 
             // Discover services
             peripheral.discoverServices(nil)
@@ -228,6 +292,14 @@ extension BluetoothService: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
             self.cleanup()
+
+            // Auto-reconnect after unexpected disconnect
+            if self.autoConnectEnabled && error != nil {
+                print("DEBUG: Connection lost, attempting auto-reconnect...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.startScanning()
+                }
+            }
         }
     }
 }

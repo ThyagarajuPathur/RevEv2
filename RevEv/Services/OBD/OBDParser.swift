@@ -108,19 +108,26 @@ enum OBDParser {
         return result?.0
     }
 
+    /// Data offset for Motor RPM in 220101 response (E-GMP platform)
+    /// Offset 53-54: Signed 16-bit motor RPM (-10100 to 10100)
+    /// Negative = regenerative braking, Positive = driving
+    private static let rpmOffset: Int = 53
+
     /// Parse with full debug info - returns (rpm, pidUsed, offset)
     static func parseEVLongRPMWithDebug(from response: String) -> (Int, String, Int)? {
         let bytes = extractBytes(from: response)
 
-        // Try Ioniq 5 / EV6 format first: 220101 -> response header 62 01 01, offset 55-56
+        // E-GMP platform (Ioniq 5, EV6, etc): 220101 -> response header 62 01 01
         if let headerIndex = findHeader(bytes: bytes, header: [0x62, 0x01, 0x01]) {
-            let offset = 55
-            if bytes.count > headerIndex + offset + 1 {
-                let a = bytes[headerIndex + offset]
-                let b = bytes[headerIndex + offset + 1]
-                let raw = Int16(bitPattern: UInt16(a) << 8 | UInt16(b))
-                print("DEBUG: [220101] Header at \(headerIndex), bytes[\(headerIndex + offset)]=\(String(format: "0x%02X", a)), bytes[\(headerIndex + offset + 1)]=\(String(format: "0x%02X", b)), raw=\(raw)")
-                return (Int(raw), "220101", offset)
+            let dataBytes = Array(bytes.dropFirst(headerIndex))
+
+            if dataBytes.count > rpmOffset + 1 {
+                let a = dataBytes[rpmOffset]
+                let b = dataBytes[rpmOffset + 1]
+
+                // Signed 16-bit: negative for regen, positive for driving
+                let rpm = Int(Int16(bitPattern: UInt16(a) << 8 | UInt16(b)))
+                return (rpm, "220101", rpmOffset)
             }
         }
 

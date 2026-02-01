@@ -198,21 +198,20 @@ final class AudioEngineService {
     /// Calculate pitch shift in cents based on RPM
     private func calculatePitch(for rpm: Float) -> Float {
         let profile = currentProfile
-        let baseRPM = Float(max(profile.baseRPM, 1))
-        let minRPM = Float(profile.minRPM)
         let maxRPM = Float(profile.maxRPM)
 
-        // Clamp RPM to valid range
-        let clampedRPM = max(minRPM, min(maxRPM, rpm))
+        // For EV: use absolute RPM (motor speed regardless of direction)
+        // Negative RPM = regen braking, Positive RPM = driving
+        // Both should increase pitch based on motor speed
+        let absRPM = abs(rpm)
 
         // Normalize RPM (0 to 1)
-        let normalizedRPM = (clampedRPM - baseRPM) / (maxRPM - baseRPM)
-        let clampedNormalized = max(0, min(1, normalizedRPM))
+        let normalizedRPM = min(1.0, absRPM / maxRPM)
 
-        // Logarithmic pitch scaling
+        // Logarithmic pitch scaling for natural engine sound
         // 1200 cents = 1 octave
-        // Using log2 for musical pitch relationship
-        let pitchMultiplier = 1.0 + clampedNormalized * 1.5
+        // Range: 0 RPM = base pitch, max RPM = +1.5 octaves
+        let pitchMultiplier = 1.0 + Double(normalizedRPM) * 1.5
         let pitchCents = 1200.0 * log2(pitchMultiplier)
 
         return Float(pitchCents)
