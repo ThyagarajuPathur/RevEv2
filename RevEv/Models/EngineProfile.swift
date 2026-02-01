@@ -23,9 +23,9 @@ struct EngineProfile: Identifiable, Hashable, Sendable {
         name: "V8 Muscle",
         description: "Classic American muscle car rumble",
         audioFileName: "v8_idle",
-        baseRPM: 800,
-        minRPM: 600,
-        maxRPM: 7000,
+        baseRPM: 0,
+        minRPM: -10100,
+        maxRPM: 10100,
         pitchRange: 2400
     )
 
@@ -34,9 +34,9 @@ struct EngineProfile: Identifiable, Hashable, Sendable {
         name: "Inline-6 Sport",
         description: "Smooth high-revving sports car",
         audioFileName: "inline6_idle",
-        baseRPM: 900,
-        minRPM: 700,
-        maxRPM: 8000,
+        baseRPM: 0,
+        minRPM: -10100,
+        maxRPM: 10100,
         pitchRange: 2800
     )
 

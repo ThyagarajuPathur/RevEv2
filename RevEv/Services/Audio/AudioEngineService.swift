@@ -16,7 +16,7 @@ final class AudioEngineService {
     private(set) var isPlaying = false
     private(set) var currentProfile: EngineProfile = .v8Muscle
     private(set) var currentPitch: Float = 0
-    private(set) var volume: Float = 1.0
+    private(set) var volume: Float = 1.5  // Base volume boost
 
     // MARK: - Private Properties
 
@@ -30,7 +30,17 @@ final class AudioEngineService {
     private var displayLink: CADisplayLink?
     private var targetRPM: Int = 0
     private var currentRPM: Float = 0
-    private let smoothingFactor: Float = 0.6
+    private var currentPitchSmooth: Float = 0
+
+    // RPM change rate (units per frame at 60fps) - higher = faster response
+    private let rpmChangeRate: Float = 800
+
+    // Pitch smoothing for silky transitions
+    private let pitchSmoothingFactor: Float = 0.3
+
+    // Volume scaling - louder overall
+    private let minVolume: Float = 0.7   // Volume at idle
+    private let maxVolume: Float = 1.5   // Volume at max RPM (boost above 1.0)
 
     // MARK: - Initialization
 
@@ -85,9 +95,9 @@ final class AudioEngineService {
         targetRPM = rpm
     }
 
-    /// Set playback volume
+    /// Set playback volume (allows boost above 1.0)
     func setVolume(_ volume: Float) {
-        self.volume = max(0, min(1, volume))
+        self.volume = max(0, min(2.0, volume))
         playerNode?.volume = self.volume
     }
 
@@ -112,6 +122,8 @@ final class AudioEngineService {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            // Set low latency buffer for responsive audio (0.005 = 5ms)
+            try session.setPreferredIOBufferDuration(0.005)
             try session.setActive(true)
         } catch {
             print("Failed to setup audio session: \(error)")
@@ -184,15 +196,40 @@ final class AudioEngineService {
     }
 
     private func tick() {
-        // Exponential smoothing for RPM
+        // Linear interpolation for RPM (responsive but not jumpy)
         let targetFloat = Float(targetRPM)
-        currentRPM += (targetFloat - currentRPM) * smoothingFactor
+        let rpmDiff = targetFloat - currentRPM
 
-        // Calculate pitch in cents
-        let pitch = calculatePitch(for: currentRPM)
-        currentPitch = pitch
+        if abs(rpmDiff) < rpmChangeRate {
+            currentRPM = targetFloat
+        } else {
+            currentRPM += rpmDiff > 0 ? rpmChangeRate : -rpmChangeRate
+        }
 
-        timePitchNode?.pitch = pitch
+        // Calculate target pitch
+        let targetPitch = calculatePitch(for: currentRPM)
+
+        // Smooth pitch transitions (prevents audible stepping)
+        currentPitchSmooth += (targetPitch - currentPitchSmooth) * pitchSmoothingFactor
+        currentPitch = currentPitchSmooth
+        timePitchNode?.pitch = currentPitchSmooth
+
+        // Smooth volume changes
+        let targetVolume = calculateVolume(for: currentRPM) * volume
+        let currentVol = playerNode?.volume ?? targetVolume
+        playerNode?.volume = currentVol + (targetVolume - currentVol) * pitchSmoothingFactor
+    }
+
+    /// Calculate volume based on RPM - louder at higher RPM
+    private func calculateVolume(for rpm: Float) -> Float {
+        let maxRPM = Float(currentProfile.maxRPM)
+        let absRPM = abs(rpm)
+
+        // Normalize RPM (0 to 1)
+        let normalizedRPM = min(1.0, absRPM / maxRPM)
+
+        // Linear interpolation from minVolume to maxVolume
+        return minVolume + (maxVolume - minVolume) * normalizedRPM
     }
 
     /// Calculate pitch shift in cents based on RPM
