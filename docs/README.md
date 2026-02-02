@@ -7,6 +7,7 @@ Technical documentation and architecture guides for the RevEv project.
 | Document | Description |
 |----------|-------------|
 | [Multi-Layer Crossfade Explained](./multi-layer-crossfade-explained.md) | Deep dive into the audio crossfading system |
+| [Bluetooth OBD Implementation Guide](./bluetooth-obd-implementation-guide.md) | BLE connection to ELM327 adapters for RPM data |
 
 ## Adding New Documents
 
