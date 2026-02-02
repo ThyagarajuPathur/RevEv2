@@ -33,11 +33,15 @@ final class AudioEngineService {
 
     private var displayLink: CADisplayLink?
     private var targetRPM: Int = 0
-    private var currentRPM: Float = 0
+    private var smoothedRPM: Float = 800  // Smoothed RPM for gradual transitions
 
     // Volume scaling
     private let minVolume: Float = 0.7   // Volume at idle
     private let maxVolume: Float = 1.5   // Volume at max RPM
+
+    // RPM smoothing factor (0.0 = no smoothing, 1.0 = instant)
+    // Lower values = smoother but more latent transitions
+    private let rpmSmoothingFactor: Float = 0.15
 
     // MARK: - Initialization
 
@@ -219,9 +223,10 @@ final class AudioEngineService {
     }
 
     private func tick() {
-        // Direct RPM update for lowest latency
-        currentRPM = Float(targetRPM)
-        let absRPM = abs(Int(currentRPM))
+        // Smooth RPM transitions to prevent abrupt pitch jumps
+        let targetFloat = Float(max(targetRPM, 800))  // Minimum idle RPM
+        smoothedRPM += (targetFloat - smoothedRPM) * rpmSmoothingFactor
+        let absRPM = abs(Int(smoothedRPM))
 
         // Calculate overall volume multiplier based on RPM
         let maxRPM = Float(currentProfile.maxRPM)
@@ -231,13 +236,13 @@ final class AudioEngineService {
         // Update each layer's volume and pitch
         for layerNode in layerNodes {
             // Calculate crossfade volume for this layer
-            let layerVolume = layerNode.layer.volume(at: Int(currentRPM))
+            let layerVolume = layerNode.layer.volume(at: Int(smoothedRPM))
 
             // Apply: layer crossfade * RPM volume curve * user volume
             let finalVolume = layerVolume * rpmVolumeMultiplier * volume
             layerNode.playerNode.volume = finalVolume
 
-            // Calculate pitch rate based on distance from layer's center RPM
+            // Calculate pitch rate using RPM ratio for accurate pitch matching
             let rate = calculateRate(for: absRPM, layer: layerNode.layer)
             layerNode.varispeedNode.rate = rate
         }
@@ -246,7 +251,7 @@ final class AudioEngineService {
         var totalPitch: Float = 0
         var totalWeight: Float = 0
         for layerNode in layerNodes {
-            let layerVolume = layerNode.layer.volume(at: Int(currentRPM))
+            let layerVolume = layerNode.layer.volume(at: Int(smoothedRPM))
             if layerVolume > 0 {
                 let rate = layerNode.varispeedNode.rate
                 let pitch = 1200.0 * log2(rate)
@@ -257,15 +262,16 @@ final class AudioEngineService {
         currentPitch = totalWeight > 0 ? totalPitch / totalWeight : 0
     }
 
-    /// Calculate playback rate for a layer based on RPM distance from center
+    /// Calculate playback rate using RPM ratio for pitch-matched crossfades
+    /// This ensures all active layers sound like the same RPM during transitions
     private func calculateRate(for rpm: Int, layer: AudioLayer) -> Float {
-        // How far from the layer's recorded RPM are we?
-        let rpmDiff = Float(rpm - layer.centerRPM)
-
-        // Scale: every 1400 RPM difference = 0.5x rate change
-        // This means at layer boundaries, pitch shift is ~50% (about 7 semitones)
-        let ratePerRPM: Float = 0.5 / 1400.0
-        let rate = 1.0 + rpmDiff * ratePerRPM
+        // Use RPM ratio: current RPM / recorded RPM
+        // This makes all layers sound like the current RPM
+        // Example at 2700 RPM:
+        //   v8_2000 (center 2000): rate = 2700/2000 = 1.35 → sounds like 2700 RPM
+        //   v8_3400 (center 3400): rate = 2700/3400 = 0.79 → sounds like 2700 RPM
+        // Both layers now have matching pitch, only timbre differs!
+        let rate = Float(rpm) / Float(layer.centerRPM)
 
         // Clamp to reasonable range (0.5x to 2.0x)
         return max(0.5, min(2.0, rate))

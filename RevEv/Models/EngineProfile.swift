@@ -58,14 +58,24 @@ struct EngineProfile: Identifiable, Hashable, Sendable {
         name: "V8 Muscle",
         description: "Classic American muscle car rumble",
         layers: [
-            // Wider overlap zones for smoother crossfade transitions
-            AudioLayer(fileName: "v8_idle", centerRPM: 800,  minRPM: 0,    maxRPM: 2200),
-            AudioLayer(fileName: "v8_2000", centerRPM: 2000, minRPM: 600,  maxRPM: 3600),
-            AudioLayer(fileName: "v8_3400", centerRPM: 3400, minRPM: 1800, maxRPM: 5000),
-            AudioLayer(fileName: "v8_4800", centerRPM: 4800, minRPM: 3200, maxRPM: 6400),
-            AudioLayer(fileName: "v8_6200", centerRPM: 6200, minRPM: 4600, maxRPM: 7800),
-            AudioLayer(fileName: "v8_7600", centerRPM: 7600, minRPM: 6000, maxRPM: 9200),
-            AudioLayer(fileName: "v8_9000", centerRPM: 9000, minRPM: 7400, maxRPM: 10100)
+            // 500 RPM intervals from 2000-9000 with 750 RPM overlap for seamless crossfade
+            // Max pitch shift per layer: 500/center ≈ 10-25% (much smoother than before)
+            AudioLayer(fileName: "v8_idle", centerRPM: 800,  minRPM: 0,    maxRPM: 1600),
+            AudioLayer(fileName: "v8_2000", centerRPM: 2000, minRPM: 1250, maxRPM: 2750),
+            AudioLayer(fileName: "v8_2500", centerRPM: 2500, minRPM: 1750, maxRPM: 3250),
+            AudioLayer(fileName: "v8_3000", centerRPM: 3000, minRPM: 2250, maxRPM: 3750),
+            AudioLayer(fileName: "v8_3500", centerRPM: 3500, minRPM: 2750, maxRPM: 4250),
+            AudioLayer(fileName: "v8_4000", centerRPM: 4000, minRPM: 3250, maxRPM: 4750),
+            AudioLayer(fileName: "v8_4500", centerRPM: 4500, minRPM: 3750, maxRPM: 5250),
+            AudioLayer(fileName: "v8_5000", centerRPM: 5000, minRPM: 4250, maxRPM: 5750),
+            AudioLayer(fileName: "v8_5500", centerRPM: 5500, minRPM: 4750, maxRPM: 6250),
+            AudioLayer(fileName: "v8_6000", centerRPM: 6000, minRPM: 5250, maxRPM: 6750),
+            AudioLayer(fileName: "v8_6500", centerRPM: 6500, minRPM: 5750, maxRPM: 7250),
+            AudioLayer(fileName: "v8_7000", centerRPM: 7000, minRPM: 6250, maxRPM: 7750),
+            AudioLayer(fileName: "v8_7500", centerRPM: 7500, minRPM: 6750, maxRPM: 8250),
+            AudioLayer(fileName: "v8_8000", centerRPM: 8000, minRPM: 7250, maxRPM: 8750),
+            AudioLayer(fileName: "v8_8500", centerRPM: 8500, minRPM: 7750, maxRPM: 9250),
+            AudioLayer(fileName: "v8_9000", centerRPM: 9000, minRPM: 8250, maxRPM: 10100)
         ],
         minRPM: -10100,
         maxRPM: 10100
