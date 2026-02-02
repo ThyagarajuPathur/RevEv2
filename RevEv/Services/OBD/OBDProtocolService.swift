@@ -27,7 +27,7 @@ final class OBDProtocolService {
     private var pollingTask: Task<Void, Never>?
     private let maxTransactions = 100
     private var consecutiveTimeouts = 0
-    private let maxConsecutiveTimeouts = 3
+    private let maxConsecutiveTimeouts = 5
 
     // MARK: - Callbacks
 
@@ -86,9 +86,9 @@ final class OBDProtocolService {
         Task {
             while isPolling {
                 await pollData()
-                // Delay between polls to prevent buffer overflow
-                // 50ms = 20Hz polling rate
-                try? await Task.sleep(nanoseconds: 50_000_000)
+                // Delay between polls to prevent buffer overflow and BLE disconnects
+                // 150ms = ~6.6Hz polling rate (stable for most BLE OBD adapters)
+                try? await Task.sleep(nanoseconds: 150_000_000)
             }
         }
     }
@@ -217,11 +217,13 @@ final class OBDProtocolService {
     private func handleTimeout() {
         consecutiveTimeouts += 1
         print("DEBUG: Consecutive timeouts: \(consecutiveTimeouts)/\(maxConsecutiveTimeouts)")
-        
+
         if consecutiveTimeouts >= maxConsecutiveTimeouts {
             print("DEBUG: Max timeouts reached. Triggering self-healing recovery...")
             consecutiveTimeouts = 0
             Task {
+                // Wait before recovery to let adapter stabilize
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
                 try? await initializeAdapter()
             }
         }

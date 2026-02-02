@@ -272,6 +272,9 @@ extension BluetoothService: CBCentralManagerDelegate {
                 self.saveLastDevice(device)
             }
 
+            // Small delay to let BLE connection stabilize before service discovery
+            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+
             // Discover services
             peripheral.discoverServices(nil)
         }
@@ -290,8 +293,8 @@ extension BluetoothService: CBCentralManagerDelegate {
 
             // Auto-reconnect after unexpected disconnect
             if self.autoConnectEnabled && error != nil {
-                print("DEBUG: Connection lost, attempting auto-reconnect...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                print("DEBUG: Connection lost (\(error?.localizedDescription ?? "unknown")), attempting auto-reconnect in 2s...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                     self.startScanning()
                 }
             }
