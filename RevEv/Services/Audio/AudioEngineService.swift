@@ -102,6 +102,11 @@ final class AudioEngineService {
             return
         }
 
+        // Set initial idle RPM so audio is audible immediately
+        if targetRPM == 0 {
+            targetRPM = 800
+        }
+
         setupAudioEngine()
         startDisplayLink()
         isPlaying = true
