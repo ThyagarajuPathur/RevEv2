@@ -86,9 +86,9 @@ final class OBDProtocolService {
         Task {
             while isPolling {
                 await pollData()
-                // Delay between polls to prevent buffer overflow and BLE disconnects
-                // 150ms = ~6.6Hz polling rate (stable for most BLE OBD adapters)
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                // Delay between polls to prevent buffer overflow
+                // 70ms = ~14Hz polling rate
+                try? await Task.sleep(nanoseconds: 70_000_000)
             }
         }
     }
