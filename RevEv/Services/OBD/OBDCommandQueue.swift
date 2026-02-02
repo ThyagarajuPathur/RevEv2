@@ -5,12 +5,6 @@
 
 import Foundation
 
-/// Actor-based command queue to ensure only one OBD command is in flight at a time
-@globalActor
-actor OBDCommandActor {
-    static let shared = OBDCommandActor()
-}
-
 /// MainActor command queue to ensure only one OBD command is in flight at a time
 @MainActor
 final class OBDCommandQueue {

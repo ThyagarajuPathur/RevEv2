@@ -5,7 +5,6 @@
 
 import Foundation
 import CoreBluetooth
-import Combine
 
 /// Core Bluetooth management service for ELM327 adapters
 @Observable
@@ -25,8 +24,6 @@ final class BluetoothService: NSObject, @unchecked Sendable {
     private var preferredWriteType: CBCharacteristicWriteType = .withResponse
 
     private var dataBuffer = Data()
-    private var responseSubject = PassthroughSubject<String, Never>()
-    private var cancellables = Set<AnyCancellable>()
 
     /// Continuation for async response waiting
     private var responseContinuation: CheckedContinuation<String, Error>?
@@ -203,8 +200,6 @@ final class BluetoothService: NSObject, @unchecked Sendable {
                 continuation.resume(returning: response)
                 responseContinuation = nil
             }
-
-            responseSubject.send(response)
         }
     }
 }

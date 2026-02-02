@@ -56,7 +56,8 @@ struct EngineProfile: Identifiable, Hashable, Sendable {
         name: "V8 Muscle",
         description: "Classic American muscle car rumble",
         layers: [
-            AudioLayer(fileName: "v8_2000", centerRPM: 2000, minRPM: 0,    maxRPM: 2700),
+            AudioLayer(fileName: "v8_idle", centerRPM: 800, minRPM: 0, maxRPM: 1500),
+            AudioLayer(fileName: "v8_2000", centerRPM: 2000, minRPM: 800, maxRPM: 2700),
             AudioLayer(fileName: "v8_3400", centerRPM: 3400, minRPM: 2000, maxRPM: 4100),
             AudioLayer(fileName: "v8_4800", centerRPM: 4800, minRPM: 3400, maxRPM: 5500),
             AudioLayer(fileName: "v8_6200", centerRPM: 6200, minRPM: 4800, maxRPM: 6900),
